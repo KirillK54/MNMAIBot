@@ -51,7 +51,9 @@ async def test_setup_wizard_saves_selects_and_audits_them(tmp_path):
 
 
 def test_setup_wizard_and_catalog_selects_build_with_discord_components():
-    assert len(SetupWizardView(object(), 1, 2).children) == 5
+    wizard = SetupWizardView(object(), 1, 2)
+    assert len(wizard.children) == 6
+    assert any(getattr(child, "label", None) == "Эпоха" for child in wizard.children)
     assert len(SetupChannelsView(object(), 2).children) == 3
     assert len(SetupRolesView(object(), 2).children) == 3
     assert len(SetupPreferencesModal(object(), 2, "Europe/Saratov", 3, False).children) == 3

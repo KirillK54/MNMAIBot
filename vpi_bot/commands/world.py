@@ -5,19 +5,12 @@ from decimal import Decimal
 
 import discord
 from discord import app_commands
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from vpi_bot.commands.autocomplete import country_choices
-from vpi_bot.models import (
-    Country,
-    CountryResource,
-    EconomicStats,
-    Epoch,
-    GuildConfig,
-    MilitaryStats,
-)
+from vpi_bot.epoch_service import refresh_country_epoch_cards
+from vpi_bot.models import Country, EconomicStats, Epoch, GuildConfig, MilitaryStats
 from vpi_bot.security import admin_check
-from vpi_bot.ui.cards import country_overview_embed
 
 log = logging.getLogger(__name__)
 
@@ -130,66 +123,12 @@ def _parse_epoch_starting_stats(raw: str) -> dict | None:
     return result
 
 
-async def _refresh_country_epoch_cards(bot, guild_id: int) -> tuple[int, int]:
-    async with bot.db() as session:
-        config = await session.get(GuildConfig, guild_id)
-        epoch = (
-            await session.scalar(
-                select(Epoch).where(Epoch.guild_id == guild_id, Epoch.name == config.epoch_name)
-            )
-            if config
-            else None
-        )
-        countries = (
-            await session.scalars(
-                select(Country).where(
-                    Country.guild_id == guild_id,
-                    Country.is_active.is_(True),
-                    Country.info_message_id.is_not(None),
-                )
-            )
-        ).all()
-        cards = []
-        for country in countries:
-            stats = await session.get(EconomicStats, country.id)
-            army = await session.get(MilitaryStats, country.id)
-            resource_count = await session.scalar(
-                select(func.count(CountryResource.resource_id)).where(
-                    CountryResource.country_id == country.id
-                )
-            )
-            cards.append((country, stats, army, resource_count or 0))
-    if epoch is None:
-        return 0, len(cards)
-    updated = failed = 0
-    for country, stats, army, resource_count in cards:
-        channel = bot.get_channel(country.channel_id) if country.channel_id else None
-        if channel is None and country.channel_id:
-            try:
-                channel = await bot.fetch_channel(country.channel_id)
-            except discord.HTTPException:
-                channel = None
-        if channel is None:
-            failed += 1
-            continue
-        try:
-            message = await channel.fetch_message(country.info_message_id)
-            embed = country_overview_embed(
-                country, stats, army, resource_count=resource_count, epoch=epoch
-            )
-            embed.add_field(name="Глава государства", value=f"<@{country.owner_id}>", inline=True)
-            await message.edit(embed=embed, allowed_mentions=discord.AllowedMentions.none())
-            updated += 1
-        except discord.HTTPException:
-            failed += 1
-            log.exception("Failed to refresh epoch on country card %s", country.id)
-    return updated, failed
-
-
 def register(bot) -> None:
-    @bot.tree.command(name="epoch-set", description="Выбрать эпоху мира из каталога")
+    @bot.tree.command(
+        name="epoch-set", description="Открыть меню выбора или задать эпоху по названию"
+    )
     @app_commands.describe(
-        name="Выберите эпоху или укажите новое название и заполните описание",
+        name="Необязательно: укажите эпоху вручную; пусто — открыть графическое меню выбора",
         description="Для новой эпохи — описание; пусто — оставить описание шаблона",
         technologies="Доступные технологии через запятую; пусто — не менять шаблон",
         rules="Особые правила эпохи; пусто — не менять шаблон",
@@ -198,7 +137,7 @@ def register(bot) -> None:
     @admin_check(bot)
     async def epoch_set(
         interaction: discord.Interaction,
-        name: str,
+        name: str | None = None,
         description: str = "",
         technologies: str = "",
         rules: str = "",
@@ -207,6 +146,11 @@ def register(bot) -> None:
         from vpi_bot.models import AuditLog
         from vpi_bot.seed import seed_guild_defaults
 
+        if not name or not name.strip():
+            from vpi_bot.ui.epoch_picker import open_epoch_picker
+
+            await open_epoch_picker(bot, interaction)
+            return
         try:
             custom_starting_stats = _parse_epoch_starting_stats(starting_stats_json)
         except (ValueError, TypeError) as exc:
@@ -282,7 +226,7 @@ def register(bot) -> None:
             "Показатели уже созданных стран не сброшены.",
             ephemeral=True,
         )
-        updated, failed = await _refresh_country_epoch_cards(bot, interaction.guild_id)
+        updated, failed = await refresh_country_epoch_cards(bot, interaction.guild_id)
         if failed:
             await interaction.followup.send(
                 f"Карточки обновлены: {updated}; не удалось обновить: {failed}. Проверьте права бота.",
@@ -335,6 +279,13 @@ def register(bot) -> None:
             label = f"{era_name} · {years} · {description}"[:100]
             choices.append(app_commands.Choice(name=label, value=era_name))
         return choices[:25]
+
+    @bot.tree.command(name="epoch-menu", description="Открыть графический выбор эпохи")
+    @admin_check(bot)
+    async def epoch_menu(interaction: discord.Interaction):
+        from vpi_bot.ui.epoch_picker import open_epoch_picker
+
+        await open_epoch_picker(bot, interaction)
 
     @bot.tree.command(name="lore-add", description="Добавить запись в лор государства")
     @app_commands.describe(
@@ -639,7 +590,7 @@ def register(bot) -> None:
         equipment_json: str = "{}",
         ammunition_json: str = "{}",
     ):
-        from vpi_bot.models import AuditLog, EconomicOperation, EconomicStats, MilitaryStats
+        from vpi_bot.models import AuditLog, EconomicOperation
 
         try:
             units, equipment, ammunition = map(

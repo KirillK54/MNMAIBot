@@ -69,7 +69,7 @@ async def setup_dashboard_embed(bot, guild: discord.Guild) -> discord.Embed:
     )
     embed.add_field(
         name="🕰️ Эпоха мира",
-        value=f"{config.epoch_name} · сменить через /epoch-set",
+        value=f"{config.epoch_name} · сменить кнопкой «Эпоха» или /epoch-menu",
         inline=False,
     )
     embed.set_footer(text="Выбор категории обязателен перед /register")
@@ -348,6 +348,12 @@ class SetupWizardView(discord.ui.View):
                 config.allow_multiple_countries,
             )
         )
+
+    @discord.ui.button(label="Эпоха", emoji="🕰️", style=discord.ButtonStyle.primary, row=0)
+    async def choose_epoch(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from vpi_bot.ui.epoch_picker import open_epoch_picker
+
+        await open_epoch_picker(self.bot, interaction)
 
     @discord.ui.button(label="Обновить", emoji="🔄", style=discord.ButtonStyle.secondary, row=1)
     async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):

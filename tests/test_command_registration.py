@@ -36,6 +36,7 @@ def test_install_commands_registers_all_slash_commands():
         "resource-enable",
         "production-set",
         "epoch-set",
+        "epoch-menu",
         "lore-add",
         "lore-edit",
         "lore-delete",
@@ -90,6 +91,7 @@ def test_admin_commands_have_command_level_permission_checks():
         "resource-enable",
         "production-set",
         "epoch-set",
+        "epoch-menu",
         "lore-add",
         "lore-edit",
         "lore-delete",
@@ -160,6 +162,8 @@ def test_admin_autocomplete_callbacks_run_their_own_permission_checks():
                 parameter_name,
             )
 
+    assert not bot.tree.get_command("epoch-set")._params["name"].required
+    assert not bot.tree.get_command("epoch-menu").parameters
     assert not getattr(
         bot.tree.get_command("panel")._params["country_id"].autocomplete,
         "__discord_app_commands_checks__",

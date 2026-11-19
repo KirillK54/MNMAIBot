@@ -75,7 +75,7 @@ History, Manage Channels, Manage Roles и Add Reactions. Роль бота до�
 - `/verdict-review`, `/verdict-approve`, `/verdict-reject`, `/verdict-cancel` — очередь, модерация и безопасная отмена последствий.
 - `/post-retry`, `/outbox-status` — повторная обработка/доставка и просмотр недоставленных вердиктов.
 - `/resource-catalog` — каталог из 25 готовых ресурсов; `/resource-adjust` и `/production-set` подсказывают названия через автодополнение.
-- `/epoch-set` — выбрать эпоху из каталога с правилами, технологиями и начальными шаблонами; `/resource-add`, `/resource-adjust`, `/resource-disable`, `/resource-enable`, `/production-set`, `/industry-set`, `/military-set`, `/military-adjust`, `/technology-set`, `/lore-add`, `/lore-edit`, `/lore-delete`, `/event-add`, `/lore-summary-set`, `/history-search` — настройка и поиск игрового мира.
+- `/epoch-menu` или кнопка «Эпоха» в `/setup` — графический выбор эпохи с предпросмотром; `/epoch-set` — выбрать эпоху из каталога текстовой командой или открыть меню без параметров; `/resource-add`, `/resource-adjust`, `/resource-disable`, `/resource-enable`, `/production-set`, `/industry-set`, `/military-set`, `/military-adjust`, `/technology-set`, `/lore-add`, `/lore-edit`, `/lore-delete`, `/event-add`, `/lore-summary-set`, `/history-search` — настройка и поиск игрового мира.
 - `/economy-adjust`, `/post-grant`, `/countries`, `/country-edit`, `/country-transfer`, `/country-delete`, `/country-multiple` — административное управление государствами.
 - `/trade-offer`, `/trade-accept`, `/trade-decline`, `/exchange-rate-set`, `/exchange-rate-delete` — сделки, исполняемые транзакционно после подтверждения получателем.
 
