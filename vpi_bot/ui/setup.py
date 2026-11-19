@@ -67,6 +67,11 @@ async def setup_dashboard_embed(bot, guild: discord.Guild) -> discord.Embed:
         value="Автоматически" if config.verdict_mode == "automatic" else "Через модерацию",
         inline=True,
     )
+    embed.add_field(
+        name="🕰️ Эпоха мира",
+        value=f"{config.epoch_name} · сменить через /epoch-set",
+        inline=False,
+    )
     embed.set_footer(text="Выбор категории обязателен перед /register")
     return embed
 

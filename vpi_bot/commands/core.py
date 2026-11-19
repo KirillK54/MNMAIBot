@@ -12,6 +12,7 @@ from vpi_bot.models import (
     Country,
     CountryResource,
     EconomicStats,
+    Epoch,
     GamePost,
     GuildConfig,
     MilitaryStats,
@@ -236,7 +237,8 @@ def register(bot) -> None:
     @bot.tree.command(name="panel", description="Открыть панель управления государством")
     @app_commands.describe(country_id="ID вашего государства; без ID откроется выбор")
     async def panel(interaction: discord.Interaction, country_id: int | None = None):
-        if not interaction.guild_id or not await bot.guild_config(interaction.guild_id):
+        config = await bot.guild_config(interaction.guild_id) if interaction.guild_id else None
+        if config is None:
             await interaction.response.send_message(
                 "Сервер не авторизован или не настроен.", ephemeral=True
             )
@@ -271,6 +273,11 @@ def register(bot) -> None:
                 if country
                 else 0
             )
+            epoch = await session.scalar(
+                select(Epoch).where(
+                    Epoch.guild_id == interaction.guild_id, Epoch.name == config.epoch_name
+                )
+            )
         if not countries:
             await interaction.response.send_message(
                 "Сначала зарегистрируйте государство командой /register.", ephemeral=True
@@ -299,7 +306,9 @@ def register(bot) -> None:
                 "Экономическая статистика не найдена.", ephemeral=True
             )
             return
-        embed = country_overview_embed(country, stats, army, resource_count=resource_count or 0)
+        embed = country_overview_embed(
+            country, stats, army, resource_count=resource_count or 0, epoch=epoch
+        )
         await interaction.response.send_message(
             embed=embed, view=CountryPanel(bot, country.id, interaction.user.id), ephemeral=True
         )
@@ -531,13 +540,88 @@ def register(bot) -> None:
         async with bot.db() as session:
             rows = (
                 await session.scalars(
-                    select(Country).where(
-                        Country.guild_id == interaction.guild_id, Country.is_active.is_(True)
-                    )
+                    select(Country)
+                    .where(Country.guild_id == interaction.guild_id, Country.is_active.is_(True))
+                    .order_by(Country.name)
                 )
             ).all()
-        await interaction.response.send_message(
-            "\n".join(f"`{c.id}` **{c.name}** — <@{c.owner_id}>" for c in rows)
-            or "Государств пока нет.",
-            ephemeral=True,
+        if not rows:
+            await interaction.response.send_message("Государств пока нет.", ephemeral=True)
+            return
+        embed = discord.Embed(
+            title="🏛️ Государства сервера",
+            description="\n".join(
+                f"**{country.name}** · ID `{country.id}` · владелец <@{country.owner_id}>"
+                for country in rows[:25]
+            ),
+            color=0x5865F2,
         )
+        if len(rows) <= 25:
+            embed.set_footer(text="Выберите государство в меню, чтобы открыть его карточку")
+            view = CountrySelectView(bot, interaction.user.id, rows, admin_access=True)
+        else:
+            embed.add_field(
+                name="Больше 25 государств",
+                value="Используйте `/country-view`: ID подсказывается по названию.",
+                inline=False,
+            )
+            view = None
+        await interaction.response.send_message(
+            embed=embed,
+            view=view,
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @bot.tree.command(
+        name="country-view", description="Открыть карточку любого государства (администратор)"
+    )
+    @app_commands.describe(country_id="Выберите государство по названию или ID")
+    @admin_check(bot)
+    async def country_view(interaction: discord.Interaction, country_id: int):
+        async with bot.db() as session:
+            country = await session.scalar(
+                select(Country).where(
+                    Country.guild_id == interaction.guild_id,
+                    Country.id == country_id,
+                    Country.is_active.is_(True),
+                )
+            )
+            if country is None:
+                await interaction.response.send_message(
+                    "Активное государство не найдено.", ephemeral=True
+                )
+                return
+            stats = await session.get(EconomicStats, country.id)
+            army = await session.get(MilitaryStats, country.id)
+            resource_count = await session.scalar(
+                select(func.count(CountryResource.resource_id)).where(
+                    CountryResource.country_id == country.id
+                )
+            )
+            config = await session.get(GuildConfig, interaction.guild_id)
+            epoch = (
+                await session.scalar(
+                    select(Epoch).where(
+                        Epoch.guild_id == interaction.guild_id, Epoch.name == config.epoch_name
+                    )
+                )
+                if config
+                else None
+            )
+            owner_id = country.owner_id
+        embed = country_overview_embed(
+            country, stats, army, resource_count=resource_count or 0, epoch=epoch
+        )
+        embed.add_field(name="Глава государства", value=f"<@{owner_id}>", inline=True)
+        await interaction.response.send_message(
+            embed=embed,
+            view=CountryPanel(bot, country.id, interaction.user.id, admin_access=True),
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @country_view.autocomplete("country_id")
+    @admin_check(bot)
+    async def country_view_autocomplete(interaction: discord.Interaction, current: str):
+        return await country_choices(interaction, current)

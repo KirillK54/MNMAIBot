@@ -379,6 +379,7 @@ def register(bot) -> None:
         )
 
     @verdict_approve.autocomplete("verdict_id")
+    @admin_check(bot, allow_moderator=True)
     async def approve_verdict_autocomplete(interaction: discord.Interaction, current: str):
         return await verdict_choices(interaction, current, states=("pending",))
 
@@ -423,6 +424,7 @@ def register(bot) -> None:
         await interaction.response.send_message("Вердикт отклонён.", ephemeral=True)
 
     @verdict_reject.autocomplete("verdict_id")
+    @admin_check(bot, allow_moderator=True)
     async def reject_verdict_autocomplete(interaction: discord.Interaction, current: str):
         return await verdict_choices(interaction, current, states=("pending",))
 
@@ -645,6 +647,7 @@ def register(bot) -> None:
         )
 
     @post_retry.autocomplete("discord_message_id")
+    @admin_check(bot)
     async def post_retry_autocomplete(interaction: discord.Interaction, current: str):
         return await failed_post_choices(interaction, current)
 
@@ -794,6 +797,7 @@ def register(bot) -> None:
         )
 
     @economy_adjust.autocomplete("country_id")
+    @admin_check(bot)
     async def economy_country_autocomplete(interaction: discord.Interaction, current: str):
         return await country_choices(interaction, current)
 
@@ -952,6 +956,7 @@ def register(bot) -> None:
         )
 
     @verdict_amend.autocomplete("verdict_id")
+    @admin_check(bot)
     async def amend_verdict_autocomplete(interaction: discord.Interaction, current: str):
         return await verdict_choices(interaction, current, states=("pending", "applied"))
 
@@ -1012,5 +1017,6 @@ def register(bot) -> None:
         )
 
     @verdict_cancel.autocomplete("verdict_id")
+    @admin_check(bot)
     async def cancel_verdict_autocomplete(interaction: discord.Interaction, current: str):
         return await verdict_choices(interaction, current, states=("applied",))

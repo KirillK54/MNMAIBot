@@ -5,21 +5,195 @@ from decimal import Decimal
 
 import discord
 from discord import app_commands
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from vpi_bot.commands.autocomplete import country_choices
-from vpi_bot.models import Country, GuildConfig
+from vpi_bot.models import (
+    Country,
+    CountryResource,
+    EconomicStats,
+    Epoch,
+    GuildConfig,
+    MilitaryStats,
+)
 from vpi_bot.security import admin_check
+from vpi_bot.ui.cards import country_overview_embed
 
 log = logging.getLogger(__name__)
 
 
+def _parse_epoch_starting_stats(raw: str) -> dict | None:
+    if not raw.strip():
+        return None
+    try:
+        template = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Стартовые показатели должны быть корректным JSON.") from exc
+    if not isinstance(template, dict) or set(template) - {"economy", "military", "resources"}:
+        raise ValueError("В JSON допустимы только разделы economy, military и resources.")
+
+    def numeric_mapping(
+        value,
+        allowed: set[str],
+        section: str,
+        integer_fields: set[str] | None = None,
+    ):
+        if integer_fields is None:
+            integer_fields = set()
+        if not isinstance(value, dict) or set(value) - allowed:
+            raise ValueError(f"Проверьте поля раздела {section}.")
+        cleaned = {}
+        for key, number in value.items():
+            if (
+                isinstance(number, bool)
+                or not isinstance(number, int | float)
+                or not math.isfinite(number)
+                or (number < 0 and key != "growth")
+                or (section == "military" and key in {"readiness", "supply"} and number > 100)
+                or (key in integer_fields and not isinstance(number, int))
+            ):
+                raise ValueError(f"Недопустимое стартовое значение {section}.{key}.")
+            cleaned[key] = number
+        return cleaned
+
+    economy_fields = {
+        "treasury",
+        "gdp",
+        "income",
+        "expenses",
+        "inflation",
+        "unemployment",
+        "growth",
+        "debt",
+        "tax_revenue",
+        "industry_level",
+        "stability",
+    }
+    military_fields = {
+        "personnel",
+        "budget",
+        "technology_level",
+        "readiness",
+        "supply",
+        "units",
+        "equipment",
+        "ammunition",
+    }
+    economy = numeric_mapping(
+        template.get("economy", {}), economy_fields, "economy", {"industry_level"}
+    )
+    military_raw = template.get("military", {})
+    military = (
+        numeric_mapping(
+            {
+                key: value
+                for key, value in military_raw.items()
+                if key not in {"units", "equipment", "ammunition"}
+            },
+            military_fields - {"units", "equipment", "ammunition"},
+            "military",
+            {"personnel", "technology_level"},
+        )
+        if isinstance(military_raw, dict)
+        else {}
+    )
+    if not isinstance(military_raw, dict):
+        raise TypeError("Раздел military должен быть JSON-объектом.")
+    for group in ("units", "equipment", "ammunition"):
+        values = military_raw.get(group, {})
+        if not isinstance(values, dict) or any(
+            not isinstance(name, str)
+            or not name.strip()
+            or isinstance(amount, bool)
+            or not isinstance(amount, int | float)
+            or not math.isfinite(amount)
+            or amount < 0
+            for name, amount in values.items()
+        ):
+            raise ValueError(
+                f"Раздел military.{group} должен содержать неотрицательные количества."
+            )
+        if values:
+            military[group] = values
+    resources = template.get("resources", {})
+    if not isinstance(resources, dict) or any(
+        not isinstance(name, str)
+        or not name.strip()
+        or isinstance(amount, bool)
+        or not isinstance(amount, int | float)
+        or not math.isfinite(amount)
+        or amount < 0
+        for name, amount in resources.items()
+    ):
+        raise ValueError("Раздел resources должен содержать неотрицательные количества.")
+    result = {"economy": economy, "military": military, "resources": resources}
+    return result
+
+
+async def _refresh_country_epoch_cards(bot, guild_id: int) -> tuple[int, int]:
+    async with bot.db() as session:
+        config = await session.get(GuildConfig, guild_id)
+        epoch = (
+            await session.scalar(
+                select(Epoch).where(Epoch.guild_id == guild_id, Epoch.name == config.epoch_name)
+            )
+            if config
+            else None
+        )
+        countries = (
+            await session.scalars(
+                select(Country).where(
+                    Country.guild_id == guild_id,
+                    Country.is_active.is_(True),
+                    Country.info_message_id.is_not(None),
+                )
+            )
+        ).all()
+        cards = []
+        for country in countries:
+            stats = await session.get(EconomicStats, country.id)
+            army = await session.get(MilitaryStats, country.id)
+            resource_count = await session.scalar(
+                select(func.count(CountryResource.resource_id)).where(
+                    CountryResource.country_id == country.id
+                )
+            )
+            cards.append((country, stats, army, resource_count or 0))
+    if epoch is None:
+        return 0, len(cards)
+    updated = failed = 0
+    for country, stats, army, resource_count in cards:
+        channel = bot.get_channel(country.channel_id) if country.channel_id else None
+        if channel is None and country.channel_id:
+            try:
+                channel = await bot.fetch_channel(country.channel_id)
+            except discord.HTTPException:
+                channel = None
+        if channel is None:
+            failed += 1
+            continue
+        try:
+            message = await channel.fetch_message(country.info_message_id)
+            embed = country_overview_embed(
+                country, stats, army, resource_count=resource_count, epoch=epoch
+            )
+            embed.add_field(name="Глава государства", value=f"<@{country.owner_id}>", inline=True)
+            await message.edit(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+            updated += 1
+        except discord.HTTPException:
+            failed += 1
+            log.exception("Failed to refresh epoch on country card %s", country.id)
+    return updated, failed
+
+
 def register(bot) -> None:
-    @bot.tree.command(name="epoch-set", description="Установить текущую игровую эпоху")
+    @bot.tree.command(name="epoch-set", description="Выбрать эпоху мира из каталога")
     @app_commands.describe(
-        name="Название эпохи, например «Индустриальная эпоха»",
-        description="Кратко опишите технологии и ограничения эпохи",
-        technologies="Список уже доступных технологий через запятую",
+        name="Выберите эпоху или укажите новое название и заполните описание",
+        description="Для новой эпохи — описание; пусто — оставить описание шаблона",
+        technologies="Доступные технологии через запятую; пусто — не менять шаблон",
+        rules="Особые правила эпохи; пусто — не менять шаблон",
+        starting_stats_json='JSON: {"economy":{"treasury":1000},"resources":{"Зерно":500}}',
     )
     @admin_check(bot)
     async def epoch_set(
@@ -27,40 +201,64 @@ def register(bot) -> None:
         name: str,
         description: str = "",
         technologies: str = "",
+        rules: str = "",
+        starting_stats_json: str = "",
     ):
-        from vpi_bot.models import AuditLog, Epoch
+        from vpi_bot.models import AuditLog
+        from vpi_bot.seed import seed_guild_defaults
 
+        try:
+            custom_starting_stats = _parse_epoch_starting_stats(starting_stats_json)
+        except (ValueError, TypeError) as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
         async with bot.db() as session:
             config = await session.get(GuildConfig, interaction.guild_id)
             if not config or not await bot.guild_config(interaction.guild_id):
                 await interaction.response.send_message("Сервер не настроен.", ephemeral=True)
                 return
-            old_name = config.epoch_name
-            old_epoch = await session.scalar(
-                select(Epoch).where(Epoch.guild_id == interaction.guild_id, Epoch.name == old_name)
-            )
-            old = {
-                "name": old_name,
-                "description": old_epoch.description if old_epoch else "",
-                "technologies": old_epoch.technologies if old_epoch else [],
-            }
-            config.epoch_name = name[:120]
+            await seed_guild_defaults(session, interaction.guild_id)
             epoch = await session.scalar(
-                select(Epoch).where(
-                    Epoch.guild_id == interaction.guild_id, Epoch.name == name[:120]
-                )
+                select(Epoch).where(Epoch.guild_id == interaction.guild_id, Epoch.name == name)
             )
             if epoch is None:
-                epoch = Epoch(guild_id=interaction.guild_id, name=name[:120])
+                if not description.strip():
+                    await interaction.response.send_message(
+                        "Чтобы создать собственную эпоху, заполните её описание.", ephemeral=True
+                    )
+                    return
+                epoch = Epoch(
+                    guild_id=interaction.guild_id,
+                    name=name[:120],
+                    description=description[:3000],
+                    rules=rules[:3000],
+                    technologies=[
+                        item.strip()[:120] for item in technologies.split(",") if item.strip()
+                    ][:100],
+                    starting_stats=custom_starting_stats or {},
+                )
                 session.add(epoch)
-            epoch.description = description[:3000]
-            epoch.technologies = [line.strip() for line in technologies.split(",") if line.strip()][
-                :100
-            ]
+                await session.flush()
+            else:
+                if description.strip():
+                    epoch.description = description[:3000]
+                if technologies.strip():
+                    epoch.technologies = [
+                        item.strip()[:120] for item in technologies.split(",") if item.strip()
+                    ][:100]
+                if rules.strip():
+                    epoch.rules = rules[:3000]
+                if custom_starting_stats is not None:
+                    epoch.starting_stats = custom_starting_stats
+            old_name = config.epoch_name
+            old = {"name": old_name}
+            config.epoch_name = epoch.name
             new = {
-                "name": config.epoch_name,
+                "name": epoch.name,
                 "description": epoch.description,
+                "rules": epoch.rules,
                 "technologies": epoch.technologies,
+                "starting_stats": epoch.starting_stats,
             }
             session.add(
                 AuditLog(
@@ -74,7 +272,69 @@ def register(bot) -> None:
                 )
             )
             await session.commit()
-        await interaction.response.send_message(f"Текущая эпоха: **{name}**.", ephemeral=True)
+        starting_note = (
+            "Новые страны получат стартовый шаблон этой эпохи."
+            if epoch.starting_stats
+            else "Для этой эпохи применяются общие стартовые значения."
+        )
+        await interaction.response.send_message(
+            f"Текущая эпоха: **{epoch.name}**. {starting_note} "
+            "Показатели уже созданных стран не сброшены.",
+            ephemeral=True,
+        )
+        updated, failed = await _refresh_country_epoch_cards(bot, interaction.guild_id)
+        if failed:
+            await interaction.followup.send(
+                f"Карточки обновлены: {updated}; не удалось обновить: {failed}. Проверьте права бота.",
+                ephemeral=True,
+            )
+
+    @epoch_set.autocomplete("name")
+    @admin_check(bot)
+    async def epoch_autocomplete(interaction: discord.Interaction, current: str):
+        from vpi_bot.seed import DEFAULT_EPOCHS
+
+        guild_id = interaction.guild_id
+        if guild_id is None:
+            return []
+        preset_rows = {
+            preset.name: (preset.start_year, preset.end_year, preset.description)
+            for preset in DEFAULT_EPOCHS
+        }
+        async with bot.db() as session:
+            stored = (
+                await session.execute(
+                    select(Epoch.name, Epoch.start_year, Epoch.end_year, Epoch.description)
+                    .where(Epoch.guild_id == guild_id)
+                    .order_by(Epoch.start_year)
+                )
+            ).all()
+        rows = dict(preset_rows)
+        for era_name, start, end, description in stored:
+            rows.setdefault(era_name, (start, end, description))
+        query = current.strip().casefold()
+        choices = []
+        for era_name, (start, end, description) in rows.items():
+            if query and query not in era_name.casefold() and query not in description.casefold():
+                continue
+            start_label = (
+                f"{abs(start)} до н. э."
+                if start is not None and start < 0
+                else f"{start} н. э."
+                if start is not None
+                else "?"
+            )
+            end_label = (
+                f"{abs(end)} до н. э."
+                if end is not None and end < 0
+                else f"{end} н. э."
+                if end is not None
+                else "далее"
+            )
+            years = f"{start_label}–{end_label}"
+            label = f"{era_name} · {years} · {description}"[:100]
+            choices.append(app_commands.Choice(name=label, value=era_name))
+        return choices[:25]
 
     @bot.tree.command(name="lore-add", description="Добавить запись в лор государства")
     @app_commands.describe(
@@ -126,6 +386,7 @@ def register(bot) -> None:
         )
 
     @lore_add.autocomplete("country_id")
+    @admin_check(bot)
     async def lore_country_autocomplete(interaction: discord.Interaction, current: str):
         return await country_choices(interaction, current)
 
@@ -264,6 +525,7 @@ def register(bot) -> None:
         )
 
     @industry_set.autocomplete("country_id")
+    @admin_check(bot)
     async def industry_country_autocomplete(interaction: discord.Interaction, current: str):
         return await country_choices(interaction, current)
 
@@ -348,6 +610,7 @@ def register(bot) -> None:
         )
 
     @military_adjust.autocomplete("country_id")
+    @admin_check(bot)
     async def military_adjust_country_autocomplete(interaction: discord.Interaction, current: str):
         return await country_choices(interaction, current)
 
@@ -503,6 +766,7 @@ def register(bot) -> None:
         )
 
     @military_set.autocomplete("country_id")
+    @admin_check(bot)
     async def military_set_country_autocomplete(interaction: discord.Interaction, current: str):
         return await country_choices(interaction, current)
 
@@ -576,5 +840,6 @@ def register(bot) -> None:
         await interaction.response.send_message(f"Технология **{name}** сохранена.", ephemeral=True)
 
     @technology_set.autocomplete("country_id")
+    @admin_check(bot)
     async def technology_country_autocomplete(interaction: discord.Interaction, current: str):
         return await country_choices(interaction, current)

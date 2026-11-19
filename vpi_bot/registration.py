@@ -1,8 +1,16 @@
 import discord
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from vpi_bot.models import Country, EconomicStats, GuildConfig
+from vpi_bot.models import (
+    Country,
+    CountryResource,
+    EconomicStats,
+    Epoch,
+    GuildConfig,
+    MilitaryStats,
+    ResourceDefinition,
+)
 from vpi_bot.ui.cards import country_overview_embed
 
 
@@ -17,6 +25,19 @@ async def registration_allowed(session, guild_id: int, user_id: int, allow_multi
         )
     )
     return existing is None
+
+
+def epoch_starting_values(epoch: Epoch | None):
+    template = epoch.starting_stats if epoch and isinstance(epoch.starting_stats, dict) else {}
+    economy_data = template.get("economy", {})
+    military_data = template.get("military", {})
+    resources = template.get("resources", {})
+    economy = EconomicStats(**economy_data) if isinstance(economy_data, dict) else EconomicStats()
+    return (
+        economy,
+        military_data if isinstance(military_data, dict) else {},
+        resources if isinstance(resources, dict) else {},
+    )
 
 
 class RegistrationModal(discord.ui.Modal, title="Регистрация государства"):
@@ -82,6 +103,15 @@ class RegistrationModal(discord.ui.Modal, title="Регистрация госу
                     "У вас уже зарегистрировано государство.", ephemeral=True
                 )
                 return
+            from vpi_bot.seed import seed_guild_defaults
+
+            await seed_guild_defaults(session, interaction.guild_id)
+            epoch = await session.scalar(
+                select(Epoch).where(
+                    Epoch.guild_id == interaction.guild_id, Epoch.name == config.epoch_name
+                )
+            )
+            economy_start, military_start, resource_start = epoch_starting_values(epoch)
             country = Country(
                 guild_id=interaction.guild_id,
                 owner_id=interaction.user.id,
@@ -91,9 +121,36 @@ class RegistrationModal(discord.ui.Modal, title="Регистрация госу
                 currency=self.currency.value.strip(),
                 description=self.description.value.strip(),
             )
-            country.economy = EconomicStats()
+            country.economy = economy_start
             session.add(country)
             try:
+                await session.flush()
+                session.add(
+                    MilitaryStats(
+                        country_id=country.id,
+                        **military_start,
+                    )
+                )
+                if resource_start:
+                    definitions = (
+                        await session.scalars(
+                            select(ResourceDefinition).where(
+                                ResourceDefinition.guild_id == interaction.guild_id,
+                                ResourceDefinition.name.in_(resource_start),
+                                ResourceDefinition.enabled.is_(True),
+                            )
+                        )
+                    ).all()
+                    for definition in definitions:
+                        quantity = resource_start.get(definition.name, 0)
+                        if quantity > 0:
+                            session.add(
+                                CountryResource(
+                                    country_id=country.id,
+                                    resource_id=definition.id,
+                                    quantity=quantity,
+                                )
+                            )
                 await session.commit()
             except IntegrityError:
                 await session.rollback()
@@ -156,11 +213,25 @@ class RegistrationModal(discord.ui.Modal, title="Регистрация госу
             async with self.bot.db() as session:
                 country_card = await session.get(Country, country_id)
                 economy_card = await session.get(EconomicStats, country_id)
-            embed = country_overview_embed(country_card, economy_card)
-            embed.add_field(name="🕰️ Эпоха", value=config.epoch_name, inline=True)
-            embed.add_field(
-                name="👤 Глава государства", value=interaction.user.mention, inline=True
+                military_card = await session.get(MilitaryStats, country_id)
+                epoch_card = await session.scalar(
+                    select(Epoch).where(
+                        Epoch.guild_id == interaction.guild_id, Epoch.name == config.epoch_name
+                    )
+                )
+                resource_count = await session.scalar(
+                    select(func.count(CountryResource.resource_id)).where(
+                        CountryResource.country_id == country_id
+                    )
+                )
+            embed = country_overview_embed(
+                country_card,
+                economy_card,
+                military_card,
+                resource_count=resource_count or 0,
+                epoch=epoch_card,
             )
+            embed.add_field(name="Глава государства", value=interaction.user.mention, inline=True)
             welcome_message = await channel.send(embed=embed)
             async with self.bot.db() as session:
                 row = await session.get(Country, country_id)

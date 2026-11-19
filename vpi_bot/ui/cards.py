@@ -1,7 +1,7 @@
 import discord
 
 from vpi_bot.ai.schemas import JudgeResult
-from vpi_bot.models import Country, EconomicStats, MilitaryStats
+from vpi_bot.models import Country, EconomicStats, Epoch, MilitaryStats
 
 COLORS = {
     "success": 0x2ECC71,
@@ -104,6 +104,7 @@ def country_overview_embed(
     army: MilitaryStats | None = None,
     *,
     resource_count: int = 0,
+    epoch: Epoch | None = None,
 ) -> discord.Embed:
     stability = float(stats.stability) if stats else 0
     color = 0x2ECC71 if stability >= 70 else 0xF1C40F if stability >= 40 else 0xE74C3C
@@ -117,6 +118,15 @@ def country_overview_embed(
     embed.add_field(name="👑 Правление", value=country.government, inline=True)
     embed.add_field(name="🛐 Религия", value=country.religion, inline=True)
     embed.add_field(name="💱 Валюта", value=country.currency, inline=True)
+    if epoch:
+        start = _era_year(epoch.start_year) if epoch.start_year is not None else "?"
+        end = _era_year(epoch.end_year) if epoch.end_year is not None else "далее"
+        technologies = ", ".join(epoch.technologies[:5]) or "уточняет администратор"
+        era_text = f"{start} — {end}"
+        if epoch.description:
+            era_text += f"\n{epoch.description[:300]}"
+        era_text += f"\nВозможные технологии: {technologies}"[:500]
+        embed.add_field(name="🕰️ Эпоха", value=era_text[:1000], inline=False)
     if stats:
         embed.add_field(
             name="💰 Казна", value=f"{stats.treasury:,.2f} {country.currency}", inline=True
@@ -152,3 +162,7 @@ def country_overview_embed(
 def _meter(value: float) -> str:
     filled = max(0, min(10, round(value / 10)))
     return "🟩" * filled + "⬜" * (10 - filled)
+
+
+def _era_year(year: int) -> str:
+    return f"{abs(year)} до н. э." if year < 0 else f"{year} н. э."

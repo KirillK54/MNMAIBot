@@ -173,6 +173,8 @@ class Epoch(Base):
     end_year: Mapped[int | None] = mapped_column(Integer)
     restrictions: Mapped[dict] = mapped_column(JSON, default=dict)
     technologies: Mapped[list] = mapped_column(JSON, default=list)
+    rules: Mapped[str] = mapped_column(Text, default="")
+    starting_stats: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class CountryLore(Base):

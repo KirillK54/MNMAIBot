@@ -213,6 +213,14 @@ class VPIBot(commands.Bot):
                 log.info("Created PostgreSQL database %s", engine.url.database)
             async with engine.begin() as connection:
                 await connection.run_sync(Base.metadata.create_all)
+            async with self.db() as session:
+                guild_ids = (await session.scalars(select(GuildConfig.guild_id))).all()
+                if guild_ids:
+                    from vpi_bot.seed import seed_guild_defaults
+
+                    for guild_id in guild_ids:
+                        await seed_guild_defaults(session, guild_id)
+                    await session.commit()
         except (OSError, SQLAlchemyError) as exc:
             log.error("Database startup check failed: %s", exc)
             raise SystemExit(

@@ -71,11 +71,11 @@ History, Manage Channels, Manage Roles и Add Reactions. Роль бота до�
 - `/register` — регистрационная форма; число активных государств на игрока задаёт `/setup` или `/country-multiple`.
 - `/panel` — личная панель выбранного государства: экономика, склад, история, промышленность, армия, технологии, проекты и лор; поле ID подсказывает страны, кнопка «Как играть» показывает памятку.
 - `/admin` — сводка администраторских настроек.
-- `/countries` — список государств для администратора.
+- `/countries` — список и выбор карточки государства для администратора; `/country-view` открывает карточку по подсказанному названию/ID.
 - `/verdict-review`, `/verdict-approve`, `/verdict-reject`, `/verdict-cancel` — очередь, модерация и безопасная отмена последствий.
 - `/post-retry`, `/outbox-status` — повторная обработка/доставка и просмотр недоставленных вердиктов.
 - `/resource-catalog` — каталог из 25 готовых ресурсов; `/resource-adjust` и `/production-set` подсказывают названия через автодополнение.
-- `/resource-add`, `/resource-adjust`, `/resource-disable`, `/resource-enable`, `/production-set`, `/industry-set`, `/military-set`, `/military-adjust`, `/technology-set`, `/epoch-set`, `/lore-add`, `/lore-edit`, `/lore-delete`, `/event-add`, `/lore-summary-set`, `/history-search` — настройка и поиск игрового мира.
+- `/epoch-set` — выбрать эпоху из каталога с правилами, технологиями и начальными шаблонами; `/resource-add`, `/resource-adjust`, `/resource-disable`, `/resource-enable`, `/production-set`, `/industry-set`, `/military-set`, `/military-adjust`, `/technology-set`, `/lore-add`, `/lore-edit`, `/lore-delete`, `/event-add`, `/lore-summary-set`, `/history-search` — настройка и поиск игрового мира.
 - `/economy-adjust`, `/post-grant`, `/countries`, `/country-edit`, `/country-transfer`, `/country-delete`, `/country-multiple` — административное управление государствами.
 - `/trade-offer`, `/trade-accept`, `/trade-decline`, `/exchange-rate-set`, `/exchange-rate-delete` — сделки, исполняемые транзакционно после подтверждения получателем.
 

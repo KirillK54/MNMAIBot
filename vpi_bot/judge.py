@@ -146,9 +146,13 @@ async def build_context(
         },
         "epoch": {
             "name": epoch_name,
+            "start_year": epoch.start_year if epoch else None,
+            "end_year": epoch.end_year if epoch else None,
             "description": epoch.description if epoch else "",
+            "rules": epoch.rules if epoch else "",
             "restrictions": epoch.restrictions if epoch else {},
-            "technologies": epoch.technologies if epoch else [],
+            "available_technologies": epoch.technologies if epoch else [],
+            "starting_stats_template": epoch.starting_stats if epoch else {},
         },
         "economy": {
             key: str(getattr(stats, key))

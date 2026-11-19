@@ -75,6 +75,7 @@ def register(bot) -> None:
         )
 
     @country_delete.autocomplete("country_id")
+    @admin_check(bot)
     async def delete_country_autocomplete(interaction: discord.Interaction, current: str):
         return await country_choices(interaction, current)
 
@@ -199,6 +200,7 @@ def register(bot) -> None:
             )
 
     @country_transfer.autocomplete("country_id")
+    @admin_check(bot)
     async def transfer_country_autocomplete(interaction: discord.Interaction, current: str):
         return await country_choices(interaction, current)
 
@@ -313,5 +315,6 @@ def register(bot) -> None:
         )
 
     @country_edit.autocomplete("country_id")
+    @admin_check(bot)
     async def edit_country_autocomplete(interaction: discord.Interaction, current: str):
         return await country_choices(interaction, current)

@@ -54,6 +54,7 @@ def register(bot) -> None:
         await interaction.response.send_message("Запись лора обновлена.", ephemeral=True)
 
     @lore_edit.autocomplete("lore_id")
+    @admin_check(bot)
     async def lore_edit_autocomplete(interaction: discord.Interaction, current: str):
         return await lore_choices(interaction, current)
 
@@ -95,6 +96,7 @@ def register(bot) -> None:
         )
 
     @lore_delete.autocomplete("lore_id")
+    @admin_check(bot)
     async def lore_delete_autocomplete(interaction: discord.Interaction, current: str):
         return await lore_choices(interaction, current)
 
@@ -156,6 +158,7 @@ def register(bot) -> None:
         )
 
     @event_add.autocomplete("country_id")
+    @admin_check(bot)
     async def event_country_autocomplete(interaction: discord.Interaction, current: str):
         return await country_choices(interaction, current)
 
@@ -208,6 +211,7 @@ def register(bot) -> None:
         await interaction.response.send_message("Постоянная сводка сохранена.", ephemeral=True)
 
     @lore_summary_set.autocomplete("country_id")
+    @admin_check(bot)
     async def summary_country_autocomplete(interaction: discord.Interaction, current: str):
         return await country_choices(interaction, current)
 

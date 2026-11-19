@@ -218,10 +218,12 @@ def register(bot) -> None:
         )
 
     @resource_adjust.autocomplete("resource_name")
+    @admin_check(bot)
     async def resource_adjust_autocomplete(interaction: discord.Interaction, current: str):
         return await _resource_choices(interaction, current)
 
     @resource_adjust.autocomplete("country_id")
+    @admin_check(bot)
     async def resource_country_autocomplete(interaction: discord.Interaction, current: str):
         return await country_choices(interaction, current)
 
@@ -279,6 +281,7 @@ def register(bot) -> None:
         )
 
     @resource_disable.autocomplete("resource_name")
+    @admin_check(bot)
     async def resource_disable_autocomplete(interaction: discord.Interaction, current: str):
         return await _resource_choices(interaction, current, enabled=True)
 
@@ -322,6 +325,7 @@ def register(bot) -> None:
         )
 
     @resource_enable.autocomplete("resource_name")
+    @admin_check(bot)
     async def resource_enable_autocomplete(interaction: discord.Interaction, current: str):
         return await _resource_choices(interaction, current, enabled=False)
 
@@ -413,9 +417,11 @@ def register(bot) -> None:
         )
 
     @production_set.autocomplete("resource_name")
+    @admin_check(bot)
     async def production_resource_autocomplete(interaction: discord.Interaction, current: str):
         return await _resource_choices(interaction, current, enabled=True)
 
     @production_set.autocomplete("country_id")
+    @admin_check(bot)
     async def production_country_autocomplete(interaction: discord.Interaction, current: str):
         return await country_choices(interaction, current)

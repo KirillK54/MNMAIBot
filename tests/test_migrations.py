@@ -81,6 +81,8 @@ def test_upgrade_adds_new_columns_to_a_database_at_0001(tmp_path: Path, monkeypa
     }
     guild_columns = {column["name"] for column in inspector.get_columns("guild_configs")}
     assert {"timezone", "allow_multiple_countries", "system_channel_id"} <= guild_columns
+    epoch_columns = {column["name"] for column in inspector.get_columns("epochs")}
+    assert {"rules", "starting_stats"} <= epoch_columns
     with engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT timezone FROM guild_configs WHERE guild_id=101"))

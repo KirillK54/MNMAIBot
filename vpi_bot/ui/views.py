@@ -9,7 +9,9 @@ from vpi_bot.models import (
     CountryTechnology,
     EconomicOperation,
     EconomicStats,
+    Epoch,
     GamePost,
+    GuildConfig,
     HistoricalEvent,
     IndustryFacility,
     MilitaryStats,
@@ -22,7 +24,7 @@ from vpi_bot.ui.cards import country_overview_embed
 
 
 class CountrySelect(discord.ui.Select):
-    def __init__(self, bot, owner_id: int, countries: list[Country]):
+    def __init__(self, bot, owner_id: int, countries: list[Country], *, admin_access: bool = False):
         options = [
             discord.SelectOption(label=row.name[:100], value=str(row.id)) for row in countries[:25]
         ]
@@ -30,23 +32,39 @@ class CountrySelect(discord.ui.Select):
             placeholder="Выберите государство", options=options, min_values=1, max_values=1
         )
         self.bot, self.owner_id = bot, owner_id
+        self.admin_access = admin_access
 
     async def callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message(
-                "Этот выбор принадлежит другому игроку.", ephemeral=True
+                "Этот выбор принадлежит другому пользователю.", ephemeral=True
             )
             return
+        if self.admin_access and interaction.guild_id is None:
+            await interaction.response.send_message(
+                "Административный выбор доступен только на сервере.", ephemeral=True
+            )
+            return
+        if self.admin_access and not interaction.permissions.administrator:
+            config = await self.bot.guild_config(interaction.guild_id)
+            role_id = config.admin_role_id if config else None
+            if not role_id or not any(
+                role.id == role_id for role in getattr(interaction.user, "roles", ())
+            ):
+                await interaction.response.send_message(
+                    "Недостаточно прав для просмотра карточки.", ephemeral=True
+                )
+                return
         country_id = int(self.values[0])
         async with self.bot.db() as session:
-            country = await session.scalar(
-                select(Country).where(
-                    Country.id == country_id,
-                    Country.owner_id == self.owner_id,
-                    Country.guild_id == interaction.guild_id,
-                    Country.is_active.is_(True),
-                )
+            query = select(Country).where(
+                Country.id == country_id,
+                Country.guild_id == interaction.guild_id,
+                Country.is_active.is_(True),
             )
+            if not self.admin_access:
+                query = query.where(Country.owner_id == self.owner_id)
+            country = await session.scalar(query)
             stats = await session.get(EconomicStats, country_id) if country else None
             army = await session.get(MilitaryStats, country_id) if country else None
             resource_count = (
@@ -58,44 +76,69 @@ class CountrySelect(discord.ui.Select):
                 if country
                 else 0
             )
-        if not country or not stats:
+            config = await session.get(GuildConfig, interaction.guild_id)
+            epoch = (
+                await session.scalar(
+                    select(Epoch).where(
+                        Epoch.guild_id == interaction.guild_id, Epoch.name == config.epoch_name
+                    )
+                )
+                if config
+                else None
+            )
+        if not country:
             await interaction.response.send_message(
-                "Данные государства не найдены.", ephemeral=True
+                "Государство недоступно; обновите список.", ephemeral=True
             )
             return
-        embed = country_overview_embed(country, stats, army, resource_count=resource_count or 0)
+        embed = country_overview_embed(
+            country, stats, army, resource_count=resource_count or 0, epoch=epoch
+        )
+        embed.add_field(name="Глава государства", value=f"<@{country.owner_id}>", inline=True)
         await interaction.response.edit_message(
-            embed=embed, view=CountryPanel(self.bot, country.id, self.owner_id)
+            embed=embed,
+            view=CountryPanel(self.bot, country.id, self.owner_id, admin_access=self.admin_access),
         )
 
 
 class CountrySelectView(discord.ui.View):
-    def __init__(self, bot, owner_id: int, countries: list[Country]):
+    def __init__(self, bot, owner_id: int, countries: list[Country], *, admin_access: bool = False):
         super().__init__(timeout=180)
-        self.add_item(CountrySelect(bot, owner_id, countries))
+        self.add_item(CountrySelect(bot, owner_id, countries, admin_access=admin_access))
 
 
 class CountryPanel(discord.ui.View):
-    def __init__(self, bot, country_id: int, owner_id: int):
+    def __init__(self, bot, country_id: int, owner_id: int, *, admin_access: bool = False):
         super().__init__(timeout=300)
         self.bot, self.country_id, self.owner_id = bot, country_id, owner_id
+        self.admin_access = admin_access
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
+        if interaction.user.id != self.owner_id or interaction.guild_id is None:
             await interaction.response.send_message(
-                "Эта панель принадлежит другому игроку.", ephemeral=True
+                "Эта панель принадлежит другому пользователю.", ephemeral=True
             )
             return False
         async with self.bot.db() as session:
             country = await session.get(Country, self.country_id)
-        if (
-            not country
-            or country.guild_id != interaction.guild_id
-            or not country.is_active
-            or country.owner_id != interaction.user.id
-        ):
+        authorized = country is not None and country.owner_id == interaction.user.id
+        if self.admin_access:
+            authorized = bool(interaction.permissions.administrator)
+            if not authorized:
+                config = await self.bot.guild_config(interaction.guild_id)
+                role_id = config.admin_role_id if config else None
+                authorized = bool(
+                    role_id
+                    and any(role.id == role_id for role in getattr(interaction.user, "roles", ()))
+                )
+        if not country or country.guild_id != interaction.guild_id or not country.is_active:
             await interaction.response.send_message(
-                "Владелец государства изменился; откройте панель заново.", ephemeral=True
+                "Государство недоступно; обновите список `/countries`.", ephemeral=True
+            )
+            return False
+        if not authorized:
+            await interaction.response.send_message(
+                "Недостаточно прав для просмотра этой карточки.", ephemeral=True
             )
             return False
         return True
@@ -177,7 +220,21 @@ class CountryPanel(discord.ui.View):
                     CountryResource.country_id == self.country_id
                 )
             )
-        embed = country_overview_embed(country, stats, army, resource_count=resource_count or 0)
+            config = await session.get(GuildConfig, interaction.guild_id)
+            epoch = (
+                await session.scalar(
+                    select(Epoch).where(
+                        Epoch.guild_id == interaction.guild_id, Epoch.name == config.epoch_name
+                    )
+                )
+                if config
+                else None
+            )
+        embed = country_overview_embed(
+            country, stats, army, resource_count=resource_count or 0, epoch=epoch
+        )
+        if self.admin_access:
+            embed.add_field(name="Глава государства", value=f"<@{country.owner_id}>", inline=True)
         await interaction.response.edit_message(embed=embed, view=self)
 
     @discord.ui.button(label="История", emoji="📜", style=discord.ButtonStyle.secondary, row=1)

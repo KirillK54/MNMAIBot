@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from vpi_bot.judge import build_context
-from vpi_bot.models import Base, Country, CountryLore, EconomicStats, GuildConfig
+from vpi_bot.models import Base, Country, CountryLore, EconomicStats, Epoch, GuildConfig
 
 
 @pytest.mark.asyncio
@@ -44,11 +44,27 @@ async def test_context_selects_relevant_lore_and_includes_live_state(tmp_path):
             ]
         )
         config = GuildConfig(guild_id=77, epoch_name="Индустриальная эпоха", game_rules="Без магии")
-        session.add(config)
+        session.add_all(
+            [
+                config,
+                Epoch(
+                    guild_id=77,
+                    name="Индустриальная эпоха",
+                    description="Пар и фабрики.",
+                    rules="Нет цифровых сетей.",
+                    technologies=["паровая машина"],
+                    restrictions={"forbidden_technologies": ["компьютер"]},
+                    starting_stats={"economy": {"industry_level": 3}},
+                ),
+            ]
+        )
         await session.flush()
         context = await build_context(session, country, config, "послевоенная земельная реформа")
         assert context["lore"][0]["title"] == "Гражданская война"
         assert Decimal(context["economy"]["treasury"]) == Decimal(1234)
         assert context["epoch"]["name"] == "Индустриальная эпоха"
+        assert context["epoch"]["rules"] == "Нет цифровых сетей."
+        assert context["epoch"]["available_technologies"] == ["паровая машина"]
+        assert context["epoch"]["restrictions"]["forbidden_technologies"] == ["компьютер"]
         assert context["world_rules"] == "Без магии"
     await engine.dispose()
