@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vpi-discord-bot"
+version = "0.1.0"
+description = "Модульная игровая платформа Discord для текстовой военно-политической ролевой игры"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "discord.py>=2.4,<3",
+  "SQLAlchemy[asyncio]>=2.0,<3",
+  "asyncpg>=0.29,<1",
+  "aiosqlite>=0.20,<1",
+  "alembic>=1.13,<2",
+  "httpx>=0.27,<1",
+  "pydantic-settings>=2.4,<3",
+  "APScheduler>=3.10,<4",
+  "python-dateutil>=2.9,<3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "pytest-asyncio>=0.24,<1", "ruff>=0.6,<1", "mypy>=1.11,<2"]
+
+[project.scripts]
+vpi-bot = "vpi_bot.main:main"
+vpi-db-reset = "vpi_bot.db_reset:main"
+
+[tool.setuptools.packages.find]
+include = ["vpi_bot*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
